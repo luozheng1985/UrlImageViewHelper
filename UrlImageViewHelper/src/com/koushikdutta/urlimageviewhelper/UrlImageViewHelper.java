@@ -26,6 +26,7 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
 import android.os.Build;
+import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -460,8 +461,39 @@ public final class UrlImageViewHelper {
      *            value can be null.
      */
     private static void setUrlDrawable(final Context context, final ImageView imageView, final String url, final Drawable defaultDrawable, final long cacheDurationMs, final UrlImageViewCallback callback) {
+        setUrlDrawable(context, imageView, url, defaultDrawable, cacheDurationMs, callback, 0);
+    }
+
+    /**
+     * Download and shrink an Image located at a specified URL, and display it
+     * in the provided {@link ImageView}.
+     *
+     * @param context A {@link Context} to allow setUrlDrawable to load and save
+     *            files.
+     * @param imageView The {@link ImageView} to display the image to after it
+     *            is loaded.
+     * @param url The URL of the image that should be loaded.
+     * @param defaultDrawable A {@link Drawable} that should be displayed in
+     *            {@code imageView} while the image has not been loaded. This
+     *            image will also be displayed if the image fails to load. This
+     *            can be set to {@code null}.
+     * @param cacheDurationMs The length of time, in milliseconds, that this
+     *            image should be cached locally.
+     * @param callback An instance of {@link UrlImageViewCallback} that is
+     *            called when the image successfully finishes loading. This
+     *            value can be null.
+     * @param loadingDelayMs The length of time, in milliseconds, before image
+     *            load into memory if image is not available now.
+     */
+    public static void setUrlDrawable(final Context context, final ImageView imageView, final String url, final Drawable defaultDrawable, final long cacheDurationMs, final UrlImageViewCallback callback, long loadingDelayMs) {
         Assert.assertTrue("setUrlDrawable and loadUrlDrawable should only be called from the main thread.", Looper.getMainLooper().getThread() == Thread.currentThread());
         cleanup(context);
+
+        // Remove previously scheduled image request
+        if (handler == null)
+            handler = new Handler();
+        handler.removeCallbacks(mDelayViews.remove(imageView));
+
         // disassociate this ImageView from any pending downloads
         if (isNullOrEmpty(url)) {
             if (imageView != null) {
@@ -538,6 +570,22 @@ public final class UrlImageViewHelper {
 
         // oh noes, at this point we definitely do not have the file available in memory
         // let's prepare for an asynchronous load of the image.
+
+        if (loadingDelayMs > 0) {
+            // schedule image request in future.
+            Runnable request = new Runnable() {
+
+				@Override
+				public void run() {
+					setUrlDrawable(context, imageView, url, defaultDrawable, cacheDurationMs, callback, 0);
+				}
+
+			};
+		    mDelayViews.put(imageView, request);
+            handler.postDelayed(request, loadingDelayMs);
+            imageView.setImageDrawable(defaultDrawable);
+            return;
+        }
 
         // null it while it is downloading
         // since listviews reuse their views, we need to
@@ -791,6 +839,8 @@ public final class UrlImageViewHelper {
         task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
+    private static Handler handler;
+    private static Hashtable<ImageView, Runnable> mDelayViews = new Hashtable<ImageView, Runnable>();
     private static Hashtable<ImageView, String> mPendingViews = new Hashtable<ImageView, String>();
     private static Hashtable<String, ArrayList<ImageView>> mPendingDownloads = new Hashtable<String, ArrayList<ImageView>>();
 }
